@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+    <span id="time"></span>
+    <button onclick="sync()">Synchronize</button>
+    <script>
+        let time = 0
+        setDate(time)
+        function datetimeToString(date) {
+            function join(t, a, s) {
+                function format(m) {
+                    let f = new Intl.DateTimeFormat('en', m);
+                    return f.format(t);
+                }
+                return a.map(format).join(s);
+            }
+            let dateFormat = [{day: 'numeric'}, {month: 'short'}, {year: 'numeric'}];
+            let timeFormat = [{hour: '2-digit', 'hour12': false}, {minute: '2-digit'}, {second: '2-digit'}]
+            let s = join(date, dateFormat, '-') + " " + join(date, timeFormat, ':');
+            return s
+        }
+
+        function setDate(timestamp) {
+            let date = new Date(timestamp)
+            document.getElementById("time").innerText = datetimeToString(date)
+        }
+
+        function getServerTime() {
+            return fetch('/time', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+                .then(response => response.json())
+                .then(data => data['time'])
+        }
+
+        async function syncStep() {
+            let startTime = new Date().getTime()
+            let serverTime = await getServerTime();
+            let latency = new Date().getTime() - startTime
+            return [serverTime, latency]
+        }
+
+        function getTime(serverTime, latency) {
+            return serverTime + (latency >> 2)
+        }
+
+        function getMean(a) {
+            let sum = 0
+            for (let i = 0 ; i < a.length; i++) {
+                sum += a[i]
+            }
+            return sum / a.length
+        }
+
+        function getStd(a) {
+            let mean = getMean(a)
+            let sum = 0
+            for (let i = 0 ; i < a.length; i++) {
+                sum += (a[i] - mean) * (a[i] - mean)
+            }
+            return Math.sqrt(sum / (a.length - 1))
+        }
+
+        async function sync() {
+            let firstStepResult = await syncStep()
+            setDate(getTime(firstStepResult[0], firstStepResult[1]))
+            let latencies = [firstStepResult[1]]
+            let madeQueries = 0
+            let needQueries = 6
+            let delay = 2000
+            setTimeout(async function tick() {
+                madeQueries += 1
+                let step = await syncStep();
+                latencies.push(step[1])
+                if (madeQueries < needQueries - 1) {
+                    setTimeout(tick, delay);
+                }
+                else {
+                    latencies.sort()
+                    let median = latencies[latencies.length >> 1]
+                    let std = getStd(latencies)
+                    let good_latencies = []
+                    for (let i = 0; i < latencies.length; i++) {
+                        if (median - std <= latencies[i] && latencies[i] <= median + std) {
+                            good_latencies.push(latencies[i])
+                        }
+                    }
+                    let meanLatency = getMean(good_latencies)
+                    setDate(getTime(step[0], meanLatency))
+                }
+            }, delay)
+        }
+    </script>
+</body>
+</html>
